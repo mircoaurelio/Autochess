@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>p5 Chess Piece Placement (3x2)</title>
+    <title>Mobile Chess Pieces — Drag & Drop</title>
     <script src="https://cdn.jsdelivr.net/npm/p5@1.9.0/lib/p5.min.js"></script>
     <style>
       :root {
@@ -52,6 +52,8 @@
         box-shadow: 0 8px 30px rgba(0,0,0,0.08), 0 2px 10px rgba(0,0,0,0.06);
         background: #f6f7f9;
       }
+      /* Prevent scroll/jank during touch-drag over the canvas */
+      #canvas-wrapper, #canvas-wrapper canvas { touch-action: none; }
       canvas { display: block; }
     </style>
   </head>
@@ -65,37 +67,38 @@
     </div>
 
     <script>
-      // --- Layout constants
+      // --- Layout (responsive) --------------------------------------------
       const GRID_COLS = 3;
       const GRID_ROWS = 2;
-      const CELL_SIZE = 120; // grid cell size in px
-      const GRID_GAP = 6;
+      // Dynamic layout values computed in computeLayout()
+      let CELL_SIZE = 120; // grid cell size in px
+      let GRID_GAP = 6;
 
       // Canvas sizing
-      const CANVAS_PADDING = 24; // internal padding around content
-      const RIGHT_PANEL_WIDTH = 280; // palette + UI
-      const BOTTOM_BAR_HEIGHT = 0; // reserved if needed later
+      let CANVAS_PADDING = 24; // internal padding around content
+      let RIGHT_PANEL_WIDTH = 280; // palette + UI
+      let BOTTOM_BAR_HEIGHT = 0; // reserved if needed later
 
       // Derived canvas size
-      const GRID_WIDTH = GRID_COLS * CELL_SIZE + (GRID_COLS - 1) * GRID_GAP;
-      const GRID_HEIGHT = GRID_ROWS * CELL_SIZE + (GRID_ROWS - 1) * GRID_GAP;
-      const CANVAS_WIDTH = CANVAS_PADDING * 2 + GRID_WIDTH + RIGHT_PANEL_WIDTH;
-      const CANVAS_HEIGHT = Math.max(
+      let GRID_WIDTH = GRID_COLS * CELL_SIZE + (GRID_COLS - 1) * GRID_GAP;
+      let GRID_HEIGHT = GRID_ROWS * CELL_SIZE + (GRID_ROWS - 1) * GRID_GAP;
+      let CANVAS_WIDTH = CANVAS_PADDING * 2 + GRID_WIDTH + RIGHT_PANEL_WIDTH;
+      let CANVAS_HEIGHT = Math.max(
         CANVAS_PADDING * 2 + GRID_HEIGHT,
         CANVAS_PADDING * 2 + 360
       ) + BOTTOM_BAR_HEIGHT;
 
       // Grid origin (top-left)
-      const GRID_ORIGIN_X = CANVAS_PADDING;
-      const GRID_ORIGIN_Y = CANVAS_PADDING;
+      let GRID_ORIGIN_X = CANVAS_PADDING;
+      let GRID_ORIGIN_Y = CANVAS_PADDING;
 
       // Right panel origin
-      const PANEL_X = GRID_ORIGIN_X + GRID_WIDTH + 24;
-      const PANEL_Y = CANVAS_PADDING;
+      let PANEL_X = GRID_ORIGIN_X + GRID_WIDTH + 24;
+      let PANEL_Y = CANVAS_PADDING;
 
       // Palette layout
-      const PALETTE_CELL = 64;
-      const PALETTE_GAP = 12;
+      let PALETTE_CELL = 64;
+      let PALETTE_GAP = 12;
 
       // Unicode chess piece characters
       const PIECES = ["king", "queen", "rook", "bishop", "knight", "pawn"];
@@ -118,6 +121,10 @@
         },
       };
 
+      // Pre-rendered piece images for crisp rendering on canvas
+      /** @type {{white: Record<string, p5.Image>, black: Record<string, p5.Image>}} */
+      const pieceImages = { white: {}, black: {} };
+
       // Grid state: array of { type, color } or null
       /** @type {(null | {type: string, color: 'white'|'black'})[][]} */
       let grid = [];
@@ -135,11 +142,14 @@
       // Hover state
       let hoverCell = null; // {c, r} or null
 
-      // Trash area rect (for dropping to delete)
-      const TRASH_RECT = { x: PANEL_X, y: PANEL_Y + 260, w: RIGHT_PANEL_WIDTH - 36, h: 56 };
-
-      // Clear button rect
-      const CLEAR_RECT = { x: PANEL_X, y: PANEL_Y + 330, w: RIGHT_PANEL_WIDTH - 36, h: 44 };
+      // Trash area & Clear button rects computed on the fly to be robust
+      function trashRect() {
+        return { x: PANEL_X, y: PANEL_Y + 260, w: RIGHT_PANEL_WIDTH - 36, h: 56 };
+      }
+      function clearRect() {
+        const t = trashRect();
+        return { x: PANEL_X, y: t.y + t.h + 14, w: RIGHT_PANEL_WIDTH - 36, h: 44 };
+      }
 
       // Utility: point in rect
       function inRect(x, y, rect) {
@@ -178,14 +188,66 @@
         return { x, y, w: PALETTE_CELL, h: PALETTE_CELL };
       }
 
+      // Responsive layout computation
+      function computeLayout() {
+        const containerEl = document.querySelector('.container');
+        const containerW = containerEl ? containerEl.clientWidth : window.innerWidth;
+        const isNarrow = containerW < 640;
+
+        // Base paddings
+        CANVAS_PADDING = isNarrow ? 16 : 24;
+        GRID_GAP = 6;
+
+        if (!isNarrow) {
+          RIGHT_PANEL_WIDTH = Math.max(220, Math.min(320, Math.floor(containerW * 0.34)));
+          const gridAreaW = containerW - RIGHT_PANEL_WIDTH - CANVAS_PADDING * 2 - 24;
+          CELL_SIZE = Math.floor(Math.max(84, Math.min(120, (gridAreaW - (GRID_COLS - 1) * GRID_GAP) / GRID_COLS)));
+          PALETTE_CELL = Math.floor(Math.max(56, Math.min(76, CELL_SIZE * 0.62)));
+
+          GRID_WIDTH = GRID_COLS * CELL_SIZE + (GRID_COLS - 1) * GRID_GAP;
+          GRID_HEIGHT = GRID_ROWS * CELL_SIZE + (GRID_ROWS - 1) * GRID_GAP;
+          GRID_ORIGIN_X = CANVAS_PADDING;
+          GRID_ORIGIN_Y = CANVAS_PADDING + 22;
+          PANEL_X = GRID_ORIGIN_X + GRID_WIDTH + 24;
+          PANEL_Y = CANVAS_PADDING + 22;
+          CANVAS_WIDTH = CANVAS_PADDING * 2 + GRID_WIDTH + RIGHT_PANEL_WIDTH + 24;
+          CANVAS_HEIGHT = Math.max(
+            CANVAS_PADDING * 2 + GRID_HEIGHT + 22,
+            CANVAS_PADDING * 2 + 380
+          );
+        } else {
+          RIGHT_PANEL_WIDTH = containerW - CANVAS_PADDING * 2;
+          const gridAreaW = containerW - CANVAS_PADDING * 2;
+          CELL_SIZE = Math.floor(Math.max(76, Math.min(110, (gridAreaW - (GRID_COLS - 1) * GRID_GAP) / GRID_COLS)));
+          PALETTE_CELL = Math.floor(Math.max(52, Math.min(68, CELL_SIZE * 0.6)));
+
+          GRID_WIDTH = GRID_COLS * CELL_SIZE + (GRID_COLS - 1) * GRID_GAP;
+          GRID_HEIGHT = GRID_ROWS * CELL_SIZE + (GRID_ROWS - 1) * GRID_GAP;
+          GRID_ORIGIN_X = Math.floor((containerW - GRID_WIDTH) / 2);
+          GRID_ORIGIN_Y = CANVAS_PADDING + 22;
+          PANEL_X = CANVAS_PADDING;
+          PANEL_Y = GRID_ORIGIN_Y + GRID_HEIGHT + 24;
+          const panelBlockH = 56 + (PALETTE_CELL * 3 + PALETTE_GAP * 2) + 160;
+          CANVAS_WIDTH = containerW;
+          CANVAS_HEIGHT = PANEL_Y + panelBlockH + CANVAS_PADDING;
+        }
+      }
+
       function setup() {
+        // Compute initial responsive layout
+        computeLayout();
         const cnv = createCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
         cnv.parent('canvas-wrapper');
+        // Avoid page scrolling during drag on mobile
+        cnv.elt.style.touchAction = 'none';
         textAlign(CENTER, CENTER);
         textSize(48);
 
         // init grid
         grid = Array.from({ length: GRID_ROWS }, () => Array(GRID_COLS).fill(null));
+
+        // Generate piece images once
+        generatePieceImages();
       }
 
       function draw() {
@@ -219,6 +281,12 @@
         }
       }
 
+      // Recompute layout on resize
+      function windowResized() {
+        computeLayout();
+        resizeCanvas(CANVAS_WIDTH, CANVAS_HEIGHT);
+      }
+
       function drawGrid() {
         // Title
         noStroke();
@@ -240,7 +308,7 @@
             // piece
             const piece = grid[r][c];
             if (piece) {
-              drawPieceAt(piece, x + w / 2, y + h / 2, 60);
+              drawPieceAt(piece, x + w / 2, y + h / 2, Math.floor(CELL_SIZE * 0.5));
             }
           }
         }
@@ -286,7 +354,7 @@
             rect(rectP.x - 3, rectP.y - 3, rectP.w + 6, rectP.h + 6, 12);
           }
 
-          drawPieceAt({ type, color: selectedColor }, rectP.x + rectP.w / 2, rectP.y + rectP.h / 2, 44);
+          drawPieceAt({ type, color: selectedColor }, rectP.x + rectP.w / 2, rectP.y + rectP.h / 2, Math.floor(PALETTE_CELL * 0.7));
         }
 
         // Trash area
@@ -299,27 +367,21 @@
         fill(40);
         textSize(12);
         textAlign(LEFT, CENTER);
-        text('\u2022 Drag from palette onto grid\n\u2022 Or click a piece then tap a cell\n\u2022 Drag existing pieces to move or drop in Trash', PANEL_X - 4, CLEAR_RECT.y + CLEAR_RECT.h + 26);
+        const cR = clearRect();
+        text('\u2022 Drag from palette onto grid\n\u2022 Or tap-select piece then tap a cell\n\u2022 Drag existing pieces to move or drop in Trash', PANEL_X - 4, cR.y + cR.h + 26);
         textAlign(CENTER, CENTER);
       }
 
       function drawPieceAt(piece, cx, cy, sizePx) {
-        push();
-        textAlign(CENTER, CENTER);
-        textSize(sizePx);
-        // white or black color tint for clarity
-        // Using true unicode glyph color (black/white) differs by glyph; we add outline shadow
-        const glyph = UNICODE[piece.color][piece.type];
-        // shadow/outline
-        fill(0, 0, 0, 50);
-        text(glyph, cx + 1.5, cy + 2);
-        fill(piece.color === 'white' ? 245 : 30);
-        text(glyph, cx, cy);
-        pop();
+        const img = pieceImages[piece.color][piece.type];
+        if (!img) return;
+        imageMode(CENTER);
+        image(img, cx, cy, sizePx, sizePx);
+        imageMode(CORNER);
       }
 
       function drawTrash() {
-        const r = TRASH_RECT;
+        const r = trashRect();
         // background
         noStroke();
         fill(255, 230, 230);
@@ -337,7 +399,7 @@
       }
 
       function drawClearButton() {
-        const r = CLEAR_RECT;
+        const r = clearRect();
         const over = inRect(mouseX, mouseY, r);
         // background
         noStroke();
@@ -412,7 +474,7 @@
           strokeWeight(3);
           rect(x - 2, y - 2, w + 4, h + 4, 12);
         }
-        drawPieceAt(piece, mouseX, mouseY, 60);
+        drawPieceAt(piece, mouseX, mouseY, Math.floor(CELL_SIZE * 0.5));
       }
 
       function mousePressed() {
@@ -452,7 +514,7 @@
         }
 
         // If dropped over trash and started from grid -> delete
-        if (inRect(mouseX, mouseY, TRASH_RECT) && dropping.from === 'grid') {
+        if (inRect(mouseX, mouseY, trashRect()) && dropping.from === 'grid') {
           // do nothing (piece removed)
           return;
         }
@@ -485,7 +547,7 @@
         }
 
         // Clear button
-        if (inRect(mouseX, mouseY, CLEAR_RECT)) {
+        if (inRect(mouseX, mouseY, clearRect())) {
           for (let r = 0; r < GRID_ROWS; r++) {
             for (let c = 0; c < GRID_COLS; c++) grid[r][c] = null;
           }
@@ -525,6 +587,32 @@
         if (touches.length > 0) return; // still touching
         mouseReleased();
         return false;
+      }
+
+      function touchMoved() {
+        // Prevent page scroll during dragging
+        return false;
+      }
+
+      // Render unicode glyphs into images to use as sprites
+      function generatePieceImages() {
+        const base = 256; // high resolution for crisp scaling
+        for (const color of ['white', 'black']) {
+          for (const type of PIECES) {
+            const g = createGraphics(base, base);
+            g.pixelDensity(1);
+            g.clear();
+            g.textAlign(CENTER, CENTER);
+            g.textSize(Math.floor(base * 0.78));
+            // Shadow
+            g.fill(0, 0, 0, 60);
+            g.text(UNICODE[color][type], base / 2 + base * 0.015, base / 2 + base * 0.02);
+            // Foreground
+            g.fill(color === 'white' ? 255 : 24);
+            g.text(UNICODE[color][type], base / 2, base / 2);
+            pieceImages[color][type] = g.get();
+          }
+        }
       }
     </script>
   </body>
